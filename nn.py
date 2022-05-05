@@ -1,148 +1,176 @@
-import sys
-import numpy as np
-import lib
-import fileinput
 import random
-import operator
 import configparser
-import copy
 
-# Ant class
-
-
-class Ant:
-    def __init__(self, pheromone_map, cities_map, dimension):
-        self.cost = 0.0  # cost of ant's current traversal
-        self.pheromone_change = []  # list of change in pheromone
-        # random starting place for each ant
-        self.start = random.randint(0, dimension - 1)
-        self.cities_visited = []  # list of cities ant already visited
-        # list of cities ant hasn't visited
-        self.cities_left_to_visit = [i for i in range(dimension)]
-        # add starting city to list of cities visited
-        self.cities_visited.append(self.start)
-        # remove starting city from list that ant needs to visit
-        self.cities_left_to_visit.remove(self.start)
-        self.current_city = self.start  # set ant's current city to random start
-        self.attractiveness = [[0 if i == j else 1 / int(cities_map[i][j]) for j in range(
-            dimension)] for i in range(dimension)]  # ant's attractiveness of next move
+# class for input colors
 
 
-# function for ants to choose next city in tour
-def choose_next_city(ant, pheromone_map, alpha, beta, dimension):
-    temp = 0  # temp used for bottom half of pheromone equation from slides
-    probabilities = [0 for i in range(dimension)]  # list of probablities
-    for i in ant.cities_left_to_visit:  # loop for summation of bottom of equation
-        temp += float(pheromone_map[ant.current_city][i]) ** alpha * \
-            float(ant.attractiveness[ant.current_city][i]) ** beta
-    for i in range(dimension):  # loop to copmlete equation for each city
-        try:
-            ant.cities_left_to_visit.index(i)  # test value
-            probabilities[i] = float(pheromone_map[ant.current_city][i])**alpha * float(
-                ant.attractiveness[ant.current_city][i]) ** beta / temp
-        except ValueError:
-            pass
-    choice = 0  # initilize ant's choice
-    rand = random.random()  # random number
-    # roulette randomization. concept from https://stackoverflow.com/questions/10324015/fitness-proportionate-selection-roulette-wheel-selection-in-python
-    # enumerate list of probablities for traversing
-    for i, probability in enumerate(probabilities):
-        rand -= probability
-        if rand <= 0:
-            choice = i
-            break
-        # resets ant's tour
-    if len(probabilities) > 0:  # if not empty list of probabliites
-        if not ant.cities_left_to_visit:  # and an empty list of cities left ot visit
-            choice = ant.start  # move ant back to start
-            ant.cities_left_to_visit = []  # emptys the list of cities left to visit
-            for city in [i for i in range(dimension)]:  # for every city
-                if city != ant.start:  # if city isnt starting city
-                    # add city to list of cities to visit
-                    ant.cities_left_to_visit.append(city)
-        else:
-            # remove ant's choice from list of cities to visit
-            ant.cities_left_to_visit.remove(choice)
-            # add ant's choice to list of cities visited
-            ant.cities_visited.append(choice)
-            # add cost of choice to ant's total cost
-            ant.cost += float(cities_map[ant.current_city][choice])
-            ant.current_city = choice  # move ant to choice ccity
+class Color:
+    def __init__(self, rValue, gValue, bValue, color_name):
+        self.red_value = rValue
+        self.blue_value = bValue
+        self.green_value = gValue
+        self.color_name = color_name
 
-# this function adjusts pheromone map with ants' pheromones
+# class for perceptrons
 
 
-def lay_pheromones(pheromone_map, ant_list, rho):
-    for i, row in enumerate(pheromone_map):
-        for j, column in enumerate(row):
-            pheromone_map[i][j] *= rho  # pheromone dissapation
-            for ant in ant_list:
-                # addition of ants' pheromones
-                pheromone_map[i][j] += ant.pheromone_change[i][j]
+class Perceptron:
+    def __init__(self, weight_red, weight_green, weight_blue, weight_bias, target):
+        self.weight_red = weight_red
+        self.weight_green = weight_green
+        self.weight_blue = weight_blue
+        self.weight_bias = weight_bias
+        self.threshold = 0.5
+        self.target = target
+        self.fired_correctly = 0
+        self.false_positive_counter = 0
+        self.false_negative_counter = 0
 
+# performs net sum and activation of perceptron for given input
+
+
+def net_sum_activation(color_input, perceptron):
+    net_sum = color_input.red_value * perceptron.weight_red + color_input.green_value * \
+        perceptron.weight_green + color_input.blue_value * \
+        perceptron.weight_blue + perceptron.weight_bias
+    if net_sum >= perceptron.threshold:
+        return 1
+    return 0
+
+# function for training - adjusts weights
+
+
+def training(color_input, perceptron, guess, learning_rate, correct):
+    perceptron.weight_bias = perceptron.weight_bias + \
+        learning_rate * (correct - guess)
+    perceptron.weight_red = perceptron.weight_red + \
+        learning_rate * (correct - guess) * color_input.red_value
+    perceptron.weight_green = perceptron.weight_green + \
+        learning_rate * (correct - guess) * color_input.green_value
+    perceptron.weight_blue = perceptron.weight_blue + \
+        learning_rate * (correct - guess) * color_input.blue_value
+
+
+# intialization of variables for program
+correct_counter = 0
+incorrect_counter = 0
+false_positive_counter = 0
+false_negative_counter = 0
+perfect_counter = 0
+perceptron_fired_counter = 0
+total = 0
+multiple_fire_counter = 0
+zero_neuron_fired_counter = 0
+input_total = 0
+line = 'a'
+color_list = []
+perceptron_list = []
+list_of_possible_colors = ['Red', 'Blue', 'Yellow',
+                           'Green', 'Purple', 'Orange', 'Brown', 'Pink', 'Gray']
 
 # instantiate configuration file parser
 config = configparser.ConfigParser()
 config.read('config.ini')  # select config file to use
 # import config values into program
-alpha = float(config['DEFAULT']['alpha'])
-beta = float(config['DEFAULT']['beta'])
-rho = float(config['DEFAULT']['rho'])
-q = float(config['DEFAULT']['q'])
-num_iterations = int(config['DEFAULT']['numIterations'])
-num_ants = int(config['DEFAULT']['numAnts'])
+learning_rate = float(config['DEFAULT']['initialLearningRate'])
+num_epochs = int(config['DEFAULT']['numEpochs'])
 file_name = str(config['DEFAULT']['fileName'])
+input_method = int(config['DEFAULT']['inputMethod'])
+weight_input_file = str(config['DEFAULT']['weightInputFile'])
+weight_output_file = str(config['DEFAULT']['weightOutputFile'])
+turn_off_training = int(config['DEFAULT']['turnOffTraining'])
 
-cities_map = []
-ant_list = []
-# pull cities map from supplied text file
+# read color ipnut from file
 with open(file_name) as f:
-    cityLetters = f.readline().split()
-    line = 1
     while line:
         line = f.readline()
         if line:
-            city = line.split()
-            for entry in city:
-                if isinstance(entry, int):
-                    entry = int(entry)
-            city = city[1:]
-        cities_map.append(city)
+            info = line.split()
+            color_list.append(
+                Color(int(info[0])/255, int(info[1])/255, int(info[2])/255, info[3]))
 
-dimension = len(cityLetters)
-pheromone_map = [[1 / (dimension * dimension) for j in range(dimension)]
-                 for i in range(dimension)]  # pheromone map inversely proportional to distance
+# determine whether weights should be inputted randomly or from file
+if input_method == 0:
+    for color in list_of_possible_colors:
+        temp_red = random.uniform(0, 1)
+        temp_green = random.uniform(0, 1)
+        temp_blue = random.uniform(0, 1)
+        temp_bias = random.uniform(0, 1)
+        perceptron_list.append(Perceptron(
+            temp_red, temp_green, temp_blue, temp_bias, color))
+else:
+    with open(weight_input_file, 'r') as f:
+        while line:
+            for color in list_of_possible_colors:
+                line = f.readline().split()
+                print(line)
+                perceptron_list.append(Perceptron(
+                    line[4], line[3], line[2], line[1], color))
+# main loop
+print('Working...\n\n')
+for _ in range(num_epochs):
+    for color in color_list:
+        perceptron_fired_counter_round = 0
+        list_correct = []
+        list_incorrect = []
+        for perceptron in perceptron_list:
+            guess = net_sum_activation(color, perceptron)
+            # determine whether guess is correct, update counters for stats
+            if (guess == 1 and color.color_name == perceptron.target):
+                correct = 1
+                perceptron_fired_counter += 1
+                perceptron_fired_counter_round += 1
+                perceptron.fired_correctly += 1
+                correct_counter += 1
+                list_correct.append(perceptron)
+            elif (guess == 0 and color.color_name != perceptron.target):
+                correct = 0
+                perceptron.fired_correctly += 1
+                correct_counter += 1
+                list_correct.append(perceptron)
+            elif (color.color_name == perceptron.target and guess == 0):
+                correct = 1
+                perceptron.false_negative_counter += 1
+                incorrect_counter += 1
+                list_incorrect.append(perceptron)
+            elif (color.color_name != perceptron.target and guess == 1):
+                correct = 0
+                perceptron_fired_counter += 1
+                perceptron_fired_counter_round += 1
+                perceptron.false_positive_counter += 1
+                incorrect_counter += 1
+                list_incorrect.append(perceptron)
+            if not turn_off_training:
+                training(color, perceptron, guess, learning_rate, correct)
+            total += 1
+        # adjust NN statistic counters
+        if len(list_correct) == len(list_of_possible_colors) and perceptron_fired_counter_round == 1:
+            perfect_counter += 1
+        if perceptron_fired_counter > 1:
+            multiple_fire_counter += 1
+        if perceptron_fired_counter_round == 0:
+            zero_neuron_fired_counter += 1
+        input_total += 1
+# output final weights to txt file
+with open(weight_output_file, 'w+') as f:
+    for p in perceptron_list:
+        string = p.target + ' ' + str(p.weight_bias) + ' ' + str(
+            p.weight_blue) + ' ' + str(p.weight_green) + ' ' + str(p.weight_red)
+        f.write(string)
+        f.write('\n')
 
-lowest_cost = 10000.0  # initialize lowest cost to a high number
-solution = []
-for i in range(num_iterations):  # loop for iterations
-    for j in range(num_ants):  # loop for adding newly created ants to list
-        ant_list.append(Ant(pheromone_map, cities_map, dimension))
-    for ant in ant_list:  # for every ant
-        for i in range(dimension - 1):  # choose next city n times
-            choose_next_city(ant, pheromone_map, alpha, beta, dimension)
-        # add ants costs tos um
-        ant.cost += float(cities_map[ant.cities_visited[-1]]
-                          [ant.cities_visited[0]])
-        # if lower than lowest, make new lowest adn add to solution
-        if ant.cost < lowest_cost:
-            lowest_cost = ant.cost
-            solution = [] + ant.cities_visited
-        ant.pheromone_change = [[0 for _ in range(dimension)]for _ in range(
-            dimension)]  # empty ant's phermone change map
-        # loop for updating ant pheromone map
-        for k in range(1, len(ant.cities_visited)):
-            temp1 = int(ant.cities_visited[k-1])
-            temp2 = int(ant.cities_visited[k])
-            ant.pheromone_change[temp1][temp2] = q / \
-                float(cities_map[temp1][temp2])
-    # lay new pheromones for all ants
-    lay_pheromones(pheromone_map, ant_list, rho)
+# calculate NN stats
+percent_zero_neurons_fired = zero_neuron_fired_counter/total
+percent_multiple_neurons_fired = multiple_fire_counter/total
+percent_perfect = perfect_counter/input_total
 
-# print final results
-print("Pheromone map: ")
-for i in range(dimension):
-    for j in range(dimension):
-        print(pheromone_map[i][j], end=' ')
-    print('')
-print("\nSolution: ", solution, "\nCost: ", lowest_cost)
+# program output
+print('Percent 0 neurons fired:', percent_zero_neurons_fired)
+print('Percent multiple neurons fired:', percent_multiple_neurons_fired)
+print('Percent perfectly executed:', percent_perfect)
+print('\nColor    % Correct   % False Pos   % False Neg')
+
+# calculate and output indivdual neuron stats
+for p in perceptron_list:
+    print(p.target, '   ', round(p.fired_correctly/input_total, 5), '  ', round(p.false_positive_counter /
+          input_total, 5), '      ', round(p.false_negative_counter/input_total, 5))
